@@ -1,0 +1,81 @@
+name: Unified Test Pipeline (Non-SAP + SAP Tosca)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+
+jobs:
+
+  non-sap-tests:
+    name: Non-SAP Tests (Pytest)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install pytest pytest-html
+
+      - name: Run Pytest
+        run: |
+          pytest non-sap-tests/pytest/ \
+            --junitxml=reports/pytest-results.xml \
+            --html=reports/pytest-report.html \
+            --self-contained-html
+
+      - name: Upload Non-SAP Reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: non-sap-reports
+          path: reports/
+
+  sap-tosca-tests:
+    name: SAP Tosca Tests
+    runs-on: self-hosted
+    continue-on-error: true
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Trigger Tosca Execution
+        shell: pwsh
+        run: |
+          .\sap-tosca-tests\tosca-trigger.ps1
+
+      - name: Upload Tosca Reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tosca-reports
+          path: reports/
+
+  gate-and-notify:
+    name: Gate - Merge and Notify
+    runs-on: ubuntu-latest
+    needs: [non-sap-tests, sap-tosca-tests]
+    if: always()
+    steps:
+      - name: Check results
+        run: |
+          echo "Non-SAP Result : ${{ needs.non-sap-tests.result }}"
+          echo "SAP Tosca Result: ${{ needs.sap-tosca-tests.result }}"
+
+  deploy:
+    name: Deploy
+    runs-on: ubuntu-latest
+    needs: [gate-and-notify]
+    if: success()
+    steps:
+      - name: Deploy to QA
+        run: echo "Deploying to QA environment..."
